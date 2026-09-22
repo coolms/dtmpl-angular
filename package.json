@@ -1,0 +1,47 @@
+{
+  "name": "@coolms/dtmpl-angular",
+  "version": "2.0.0-alpha.1",
+  "description": "The CoolMS DTMPL editor for Angular: the dialog that edits .dtmpl and .ddoc sources over the CoolMS editor bridge, the native document format's sections and footnotes, and the paper and preview services around them.",
+  "license": "MIT",
+  "author": {
+    "name": "Dmitry Popov",
+    "email": "d.popov@coolms.com"
+  },
+  "type": "module",
+  "peerDependencies": {
+    "@angular/cdk": "^22.0.0",
+    "@angular/common": "^22.0.0",
+    "@angular/core": "^22.0.0",
+    "@angular/forms": "^22.0.0",
+    "@coolms/core-angular": "^2.0.0-alpha.1",
+    "@coolms/editor-angular": "^2.0.0-alpha.1",
+    "@coolms/pdf-angular": "^2.0.0-alpha.1",
+    "@coolms/ui-angular": "^2.0.0-alpha.1",
+    "@ngxs/store": "^22.0.0",
+    "rxjs": "^7.8.0"
+  },
+  "engines": {
+    "node": "^22.22.3 || ^24.15.0 || >=26"
+  },
+  "keywords": [
+    "coolms",
+    "angular",
+    "dtmpl",
+    "template",
+    "document",
+    "editor"
+  ],
+  "bugs": {
+    "url": "https://github.com/coolms/dtmpl-angular/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coolms/dtmpl-angular.git"
+  },
+  "scripts": {
+    "build": "ng-packagr -p ng-package.json -c tsconfig.lib.json",
+    "typecheck": "tsc -p tsconfig.lib.json --noEmit",
+    "lint": "eslint 'src/**/*.ts'",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+  }
+}
