@@ -1,109 +1,32 @@
 import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { SECTION_BREAK_HTML, SECTION_BREAK_PATTERN } from '@coolms/editor-angular';
+import type { DdocFootnoteEdits, DdocPayload, DdocSectionEdit } from '@coolms/ddoc';
 import type { Observable } from 'rxjs';
 
-/** `application/x-coolms-document+json` -- the native document source format. */
-export const DDOC_DOCUMENT_MIME = 'application/x-coolms-document+json';
-
-/**
- * The size row standing for "the paper this document is already on".
- *
- * Mirrors `PaperCatalog::CUSTOM_SIZE`. The server sends the row only when no
- * preset names the document's paper, and it carries both orientations like
- * every other row -- so rotating odd paper is a lookup here, never a swap.
+/*
+ * The `.ddoc` payload types, the four mapping functions and the section-break markup are @coolms/ddoc's
+ * (2026-10-07): one copy for every client of the format, tested where it is published. Re-exported here, so an
+ * import from @coolms/dtmpl-angular keeps working.
  */
-export const DDOC_CUSTOM_SIZE = 'custom';
-
-/** The four sides of a section's writing frame, in twips. */
-export interface DdocMargins {
-    readonly top: number;
-    readonly right: number;
-    readonly bottom: number;
-    readonly left: number;
-}
-
-/**
- * A section's paper, in twips, exactly as the file states it.
- *
- *  `preset` and `marginPreset` are LABELS the server put on those numbers,
- * and are absent when the paper is none of the offers. They exist so a control
- * can seed its selects without matching twips in the browser; the twips remain
- * the paper, and the server ignores a preset name sent back to it.
- */
-export interface DdocPage {
-    readonly widthTwips: number;
-    readonly heightTwips: number;
-    readonly orientation: string;
-    readonly margins: DdocMargins;
-    readonly preset: string | null;
-    readonly marginPreset: string | null;
-}
-
-/** A paper size, with what it comes to in twips each way up. */
-export interface DdocPaperSize {
-    readonly value: string;
-    readonly label: string;
-    readonly portrait: { widthTwips: number; heightTwips: number };
-    readonly landscape: { widthTwips: number; heightTwips: number };
-}
-
-/** A named set of margins, in twips. */
-export interface DdocMarginPreset extends DdocMargins {
-    readonly value: string;
-    readonly label: string;
-}
-
-/**
- * What an author may choose from, with the twips behind every name.
- *
- *  The twips travel WITH the offers on purpose. The alternative -- the FE
- * knowing that A4 is 11906 x 16838 and that landscape swaps them -- is a second
- * copy of `PageSizeResolver`'s table, which is the one thing the `.ddoc` paper
- * seam was designed to avoid. Nothing here is computed in the browser.
- */
-export interface DdocPaperCatalog {
-    readonly sizes: readonly DdocPaperSize[];
-    readonly orientations: readonly { value: string; label: string }[];
-    readonly margins: readonly DdocMarginPreset[];
-}
-
-export interface DdocSection {
-    readonly page: DdocPage;
-    readonly html: string;
-    readonly headers: Record<string, string>;
-    readonly footers: Record<string, string>;
-}
-
-export interface DdocPayload {
-    readonly defaults: { fontName: string; fontSizePoints: number };
-    readonly paper: DdocPaperCatalog;
-    readonly sections: readonly DdocSection[];
-    readonly footnotes: Record<string, string>;
-}
-
-/**
- * What a save sends: the body of each section, by position, and the paper only
- * when the author changed it.
- *
- *  `page` is OMITTED unless the paper moved. Absent means "unchanged" on the
- * server, so leaving it out is what lets another author's paper edit survive a
- * save that only touched the text.
- */
-export interface DdocSectionEdit {
-    readonly html: string;
-    readonly page?: DdocPage;
-}
-
-/**
- * What a save sends for the notes: id -> the body's HTML.
- *
- *  Sent only when the author edited one. Absent means unchanged on the
- * server, and every note the payload does not mention keeps whatever the file
- * said -- which is what stops a save that only touched the text from wiping the
- * bodies of an imported document's footnotes.
- */
-export type DdocFootnoteEdits = Record<string, string>;
+export {
+    DDOC_CUSTOM_SIZE,
+    DDOC_DOCUMENT_MIME,
+    joinDdocSections,
+    referencedFootnoteIds,
+    sectionsDisagreeOnPaper,
+    splitDdocSections,
+} from '@coolms/ddoc';
+export type {
+    DdocFootnoteEdits,
+    DdocMarginPreset,
+    DdocMargins,
+    DdocPage,
+    DdocPaperCatalog,
+    DdocPaperSize,
+    DdocPayload,
+    DdocSection,
+    DdocSectionEdit,
+} from '@coolms/ddoc';
 
 /**
  * The `.ddoc` editing endpoints.
@@ -123,86 +46,6 @@ export type DdocFootnoteEdits = Record<string, string>;
  * editor does not mention keeps whatever the file said. Sending a partial copy
  * of them would be the one way to lose them.
  */
-/**
- * The document's sections as one flow, with a section break between them.
- *
- * A `.ddoc` is a LIST of sections and the editor holds one flow. Showing only
- * the first would leave the rest of the document invisible while still saving
- * it -- an author would see a document shorter than the one they have.
- */
-export function joinDdocSections(sections: readonly DdocSection[]): string {
-    return sections.map(section => section.html).join(SECTION_BREAK_HTML);
-}
-
-/**
- * And back apart, one entry per section.
- *
- *  The bodies, and the paper only when `page` is given. The furniture and the
- * footnote bodies are deliberately absent so the server's merge keeps whatever
- * the file says; sending a partial copy of them is the one way to lose them.
- *
- * An author who deletes a section break sends back fewer sections and the merge
- * drops the trailing one, which is what Word does with the same gesture. One
- * who adds a break gets a new section inheriting the last one's paper.
- *
- *  `page` goes on EVERY section when it goes at all. The paper control edits
- * the whole document -- the way Word's Page Setup defaults to "Apply to: whole
- * document" -- so applying it to the first section alone would leave an author
- * looking at a control that describes a page the rest of their document is not
- * on.
- */
-/**
- * The footnote ids the editor's HTML points at, in document order.
- *
- *  Read off the MARKUP rather than the ProseMirror document, because that is
- * what the dialog holds -- the editor hands back HTML and keeps its own state to
- * itself. The attribute is the fact on both sides (`FootnoteMapper` reads the
- * same one), so this cannot disagree with what a save actually sends.
- *
- * Deduplicated: two markers pointing at one note are one note.
- */
-export function referencedFootnoteIds(html: string): number[] {
-    const ids: number[] = [];
-
-    for (const match of html.matchAll(/data-footnote="(\d+)"/g)) {
-        const id = Number.parseInt(match[1] ?? '', 10);
-        if (Number.isInteger(id) && id >= 1 && !ids.includes(id)) {
-            ids.push(id);
-        }
-    }
-
-    return ids;
-}
-
-/**
- * Whether the document's sections are on more than one paper.
- *
- * A paper control describes the FIRST section, so a document whose sections
- * disagree needs to say so -- otherwise the status bar states a page that most
- * of the document is not on.
- *
- * Compared on the twips, not on `preset`: two sections can both be off-catalog
- * (`preset: null`) and still be different paper, and calling that agreement is
- * exactly the case an author would be misled by.
- */
-export function sectionsDisagreeOnPaper(payload: DdocPayload): boolean {
-    const [first, ...rest] = payload.sections;
-    if (undefined === first) return false;
-
-    return rest.some(section => section.page.widthTwips !== first.page.widthTwips
-        || section.page.heightTwips !== first.page.heightTwips
-        || section.page.orientation !== first.page.orientation
-        || section.page.margins.top !== first.page.margins.top
-        || section.page.margins.right !== first.page.margins.right
-        || section.page.margins.bottom !== first.page.margins.bottom
-        || section.page.margins.left !== first.page.margins.left);
-}
-
-export function splitDdocSections(html: string, page?: DdocPage): DdocSectionEdit[] {
-    return html.split(SECTION_BREAK_PATTERN)
-        .map(part => (undefined === page ? { html: part } : { html: part, page }));
-}
-
 @Injectable({ providedIn: 'root' })
 export class DdocDocumentService {
     private readonly http = inject(HttpClient);
