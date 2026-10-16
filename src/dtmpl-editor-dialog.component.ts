@@ -8,13 +8,13 @@ import {
     signal,
     untracked,
 } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse, HttpHeaders } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import { DIALOG_DATA, DialogRef } from '@angular/cdk/dialog';
 import { Store } from '@ngxs/store';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Subject, catchError, debounceTime, map, of, switchMap } from 'rxjs';
-import { AuthoringContextDto, AuthoringContextService, CmsContextFrameComponent, ConfirmDialogService, ToastService, VfsWriteAccessService, UnsavedChangesService, VfsNodeDto } from '@coolms/ui-angular';
+import { AuthoringContextDto, AuthoringContextService, CmsContextFrameComponent, ConfirmDialogService, NativeDialogService, ToastService, VfsWriteAccessService, UnsavedChangesService, VfsNodeDto } from '@coolms/ui-angular';
 import { CoolmsEditorComponent, type PageGeometry } from '@coolms/editor-angular';
 import {
     DDOC_CUSTOM_SIZE,
@@ -66,7 +66,7 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
             <div class="dtmpl-editor-dialog__header">
                 <span class="dtmpl-editor-dialog__title">
                     <i class="bi bi-file-earmark-code"></i>
-                    {{ node.path }}
+                    {{ target().path }}
                 </span>
                 <div class="dtmpl-editor-dialog__actions">
                     @if (dirty()) {
@@ -107,6 +107,30 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
                 </div>
             </div>
 
+            @if (notice(); as n) {
+                <div class="dtmpl-editor-dialog__notice" role="alert">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <span>
+                        @switch (n) {
+                            @case ('changed') { This file was saved by someone else since you opened it. Your edits are still here, and nothing of theirs was overwritten. }
+                            @case ('deleted') { This file was deleted since you opened it. Your edits are still here; saving cannot make it again. }
+                            @case ('unversioned') { The version of this file could not be read, so it cannot be saved over. Your edits are still here. }
+                            @case ('unreadable') { This file could not be read, so it cannot be edited here. }
+                        }
+                    </span>
+                    <span class="dtmpl-editor-dialog__notice-actions">
+                        @if (n !== 'deleted') {
+                            <button class="cms-btn cms-btn-sm" type="button" (click)="reload()">Reload</button>
+                        }
+                        @if (n !== 'unreadable' && copyable()) {
+                            <button class="cms-btn cms-btn-sm cms-btn-primary" type="button" (click)="saveAsCopy()">Save as a copy</button>
+                        } @else if (n !== 'unreadable') {
+                            <span>Download as .docx keeps your edits.</span>
+                        }
+                    </span>
+                </div>
+            }
+
             <div class="dtmpl-editor-dialog__body"
                  [class.dtmpl-editor-dialog__body--split]="preview()">
                 @if (loading()) {
@@ -118,6 +142,8 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
                     <div class="dtmpl-editor-dialog__loading">
                         <cms-loader label="Opening the document" />
                     </div>
+                } @else if (notice() === 'unreadable') {
+                    <div class="dtmpl-editor-dialog__pane dtmpl-editor-dialog__pane--unreadable"></div>
                 } @else {
                     <div class="dtmpl-editor-dialog__pane">
                         <!-- A .ddoc needs no content adapter: the seam hands
@@ -278,7 +304,7 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
                          pressed teaches nothing. Unwritable, Save opens the same
                          elevation prompt the interceptor raises on a 403. -->
                     <button class="cms-btn cms-btn-primary cms-btn-sm"
-                            [disabled]="saving() || !dirty()"
+                            [disabled]="saving() || !dirty() || notice() === 'unreadable'"
                             (click)="save()">
                         {{ saving() ? 'Saving…' : (access.writable() ? 'Save' : 'Elevate and save') }}
                     </button>
@@ -318,6 +344,13 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
         .dtmpl-editor-dialog__actions {
             display: flex; align-items: center; gap: 6px;
         }
+        .dtmpl-editor-dialog__notice {
+            display: flex; align-items: center; gap: 10px; padding: 8px 16px; flex-shrink: 0;
+            background: var(--cms-warning-light); color: var(--cms-warning-text);
+            border-bottom: 1px solid var(--cms-border); font-size: .8125rem;
+        }
+        .dtmpl-editor-dialog__notice > span:first-of-type { flex: 1; }
+        .dtmpl-editor-dialog__notice-actions { display: flex; gap: 6px; flex-shrink: 0; }
         .dtmpl-editor-dialog__body {
             flex: 1; overflow: hidden;
             display: flex; flex-direction: column;
@@ -447,6 +480,7 @@ export class DtmplEditorDialogComponent {
     private readonly store      = inject(Store);
     private readonly toast      = inject(ToastService);
     private readonly confirm    = inject(ConfirmDialogService);
+    private readonly dialogs    = inject(NativeDialogService);
     private readonly unsaved    = inject(UnsavedChangesService);
     private readonly errors     = inject(ErrorHandlerService);
     private readonly pageSizes  = inject(DocumentPageSizeService);
@@ -473,6 +507,30 @@ export class DtmplEditorDialogComponent {
     readonly dtmplAdapter       = inject(DTMPL_CONTENT_ADAPTER, { optional: true });
 
     readonly node = this.data.node;
+
+    /**
+     * The file this editor writes to, and the version of it the open content was read at (the read's `contentHash`).
+     * Every `.dtmpl` save names that version (If-Match): a file saved by someone else since is refused (412) and one
+     * deleted since is not made again (404), so two people editing one file never overwrite each other unseen. After a
+     * save the version is the one the save answered; after Save as a copy, the copy and its version.
+     */
+    readonly target = signal<{ path: string; version: string | null }>({ path: this.data.node.path, version: null });
+
+    /**
+     * Why the open content can no longer be saved over its file: it changed or went since it was read, or its version
+     * was never read. The notice says so and offers Reload or Save as a copy; a save never retries on its own and
+     * never merges. Or the file could not be read at all ('unreadable'): then there is no editor and no Save, only
+     * Reload -- an empty editor would have saved nothing over the real file.
+     */
+    readonly notice = signal<'changed' | 'deleted' | 'unversioned' | 'unreadable' | null>(null);
+
+    /**
+     * Whether Save as a copy can be offered. A `.dtmpl` copy is the editor's own bytes, always. A `.ddoc` copy is
+     * composed by the server from the original at the version read, so there is none of a document that is gone or
+     * that named no version.
+     */
+    readonly copyable = computed<boolean>(() => !this.isDdoc()
+        || (this.notice() !== 'deleted' && this.target().version !== null));
 
     /** Current editor content (HTML, post-adapter). The adapter handles the
      *  dtmpl->HTML projection on input and HTML->dtmpl on save. */
@@ -741,7 +799,7 @@ export class DtmplEditorDialogComponent {
             .pipe(
                 debounceTime(1200),
                 switchMap(html => (this.isDdoc()
-                    ? this.ddocs.render(this.node.path, this.ddocSectionsToSend(html), this.ddocFootnotesToSend())
+                    ? this.ddocs.render(this.target().path, this.ddocSectionsToSend(html), this.ddocFootnotesToSend())
                     : this.previews.render(this.node.id, html)
                 ).pipe(
                     map(blob => ({ blob, error: null as string | null })),
@@ -780,7 +838,7 @@ export class DtmplEditorDialogComponent {
         this.downloading.set(true);
 
         const bytes$ = this.isDdoc()
-            ? this.ddocs.download(this.node.path, this.ddocSectionsToSend(this.editorContent()), format, this.ddocFootnotesToSend())
+            ? this.ddocs.download(this.target().path, this.ddocSectionsToSend(this.editorContent()), format, this.ddocFootnotesToSend())
             : this.previews.download(this.node.id, this.editorContent(), format);
 
         bytes$
@@ -907,9 +965,12 @@ export class DtmplEditorDialogComponent {
      * it -- an author would see a document shorter than the one they have.
      */
     private loadDdoc(): void {
-        this.ddocs.read(this.node.path).pipe(takeUntilDestroyed(this.destroyRef))
+        // The document and the version it is at, from one read: the version every save of it names.
+        this.ddocs.read(this.target().path).pipe(takeUntilDestroyed(this.destroyRef))
             .subscribe({
                 next: (payload) => {
+                    this.target.update(t => ({ ...t, version: payload.contentHash ?? null }));
+                    this.notice.set(payload.contentHash ? null : 'unversioned');
                     this.ddocPayload.set(payload);
                     this.editorContent.set(
                         joinDdocSections(payload.sections),
@@ -919,7 +980,10 @@ export class DtmplEditorDialogComponent {
                     this.ddocEditedNotes.set({});
                     this.loading.set(false);
                 },
+                // Never an empty document a Save could write over the real one (its first section, by position):
+                // unread, there is nothing to edit.
                 error: (err: unknown) => {
+                    this.notice.set('unreadable');
                     this.loading.set(false);
                     this.toast.error(this.errors.humanize(err), 'Could not open the document');
                 },
@@ -1127,14 +1191,19 @@ export class DtmplEditorDialogComponent {
             return;
         }
 
-        this.http.get<{ content: string }>(url).pipe(
+        // The content and the version it is at, from one read: the version every save of this content names.
+        this.http.get<{ content: string; contentHash?: string | null }>(url).pipe(
             takeUntilDestroyed(this.destroyRef),
         ).subscribe({
-            next: ({ content }) => {
+            next: ({ content, contentHash }) => {
+                this.target.update(t => ({ ...t, version: contentHash ?? null }));
+                this.notice.set(contentHash ? null : 'unversioned');
                 this.editorContent.set(content ?? '');
                 this.loading.set(false);
             },
+            // Never an empty file a Save could write over the real one: unread, there is nothing to edit.
             error: () => {
+                this.notice.set('unreadable');
                 this.loading.set(false);
             },
         });
@@ -1158,7 +1227,7 @@ export class DtmplEditorDialogComponent {
     }
 
     save(): void {
-        if (this.saving()) return;
+        if (this.saving() || this.notice() === 'unreadable') return;
 
         // The server says this file is not writable for this session. Offer
         // elevation rather than sending a request that is already known to be
@@ -1184,16 +1253,31 @@ export class DtmplEditorDialogComponent {
         const url = this.fileContentUrl();
         if (!url) return;
 
+        // Over a file that changed or went, or whose version was never read: the edits go to a copy, never over it.
+        const version = this.target().version;
+        if (this.notice() !== null || version === null) {
+            this.notice.set(this.notice() ?? 'unversioned');
+            void this.saveAsCopy();
+
+            return;
+        }
+
         this.saving.set(true);
         const stored = this.dtmplAdapter?.toStorage(this.editorContent()) ?? this.editorContent();
+        const headers = new HttpHeaders({ 'If-Match': `"${version}"` });
 
-        this.http.put<{ contentHash: string }>(url, { content: stored }).pipe(
+        this.http.put<{ contentHash?: string | null }>(url, { content: stored }, { headers }).pipe(
             takeUntilDestroyed(this.destroyRef),
         ).subscribe({
-            next: () => {
+            next: res => {
+                const next = res?.contentHash ?? null;
+                this.target.update(t => ({ ...t, version: next }));
+                if (next === null) {
+                    this.notice.set('unversioned');
+                }
                 this.dirty.set(false);
                 this.saving.set(false);
-                this.toast.success('Saved', this.node.name);
+                this.toast.success('Saved', this.fileName());
             },
             // A bare 'Save failed' hides the one thing the author needs. The
             // seeded templates under `.templates/` are mode 0444, so the real
@@ -1202,18 +1286,150 @@ export class DtmplEditorDialogComponent {
             // no reason given.
             error: (err: unknown) => {
                 this.saving.set(false);
+                const status = err instanceof HttpErrorResponse ? err.status : 0;
+                if (status === 412 || status === 404) {
+                    this.notice.set(status === 412 ? 'changed' : 'deleted');
+
+                    return;
+                }
                 this.toast.error(this.errors.humanize(err), 'Save failed');
             },
         });
     }
 
-    private saveDdoc(): void {
-        this.saving.set(true);
+    /**
+     * The file as it is now, in place of the edits: the content and its version read again in one read. Edits are
+     * discarded only after the person confirms it.
+     */
+    reload(): void {
+        const go = (): void => {
+            this.notice.set(null);
+            this.dirty.set(false);
+            this.loading.set(true);
+            this.loadContent();
+        };
+        if (!this.dirty()) {
+            go();
 
-        this.ddocs.write(this.node.path, this.ddocSectionsToSend(this.editorContent()), this.ddocFootnotesToSend())
+            return;
+        }
+        this.confirm.confirmDiscard(this.fileName()).subscribe(discard => {
+            if (discard) go();
+        });
+    }
+
+    /**
+     * The edits saved as a new file next to the original, never over it: the binary write with overwrite off, so a
+     * file of the chosen name is not replaced (409). The editor then edits the copy. Declined, the edits stay here.
+     */
+    async saveAsCopy(): Promise<void> {
+        if (!this.copyable()) {
+            this.toast.error('No copy can be made of this document here', 'Download as .docx keeps your edits.');
+
+            return;
+        }
+        const original = this.target().path;
+        const dir = original.slice(0, original.lastIndexOf('/'));
+        const name = original.slice(original.lastIndexOf('/') + 1);
+        const dot = name.lastIndexOf('.');
+        const suggested = dot > 0 ? `${name.slice(0, dot)} (copy)${name.slice(dot)}` : `${name} (copy)`;
+        const chosen = await this.dialogs.input({
+            title:        this.notice() === 'deleted' ? 'The file was deleted' : 'Save your edits as a copy',
+            label:        'Save your edits as a copy named',
+            initialValue: suggested,
+            confirmLabel: 'Save as a copy',
+            cancelLabel:  'Keep editing',
+            required:     true,
+            validator:    v => (v.includes('/') ? 'A name, without a folder' : null),
+        });
+        if (chosen === null) return;
+        const copyPath = `${dir}/${chosen.trim()}`;
+        if (this.isDdoc()) {
+            this.copyDdoc(copyPath, chosen.trim());
+
+            return;
+        }
+        const binaryUrl = this.store.selectSnapshot(AppConfigState.manifest)?.vfs?.binaryWriteUrl;
+        if (!binaryUrl) return;
+        const stored = this.dtmplAdapter?.toStorage(this.editorContent()) ?? this.editorContent();
+        const form = new FormData();
+        form.append('path', copyPath);
+        form.append('overwrite', '0');
+        form.append('file', new Blob([stored], { type: this.node.mimeType ?? 'text/x-dtmpl' }), chosen.trim());
+        this.http.post<{ contentHash?: string | null }>(binaryUrl, form).pipe(
+            takeUntilDestroyed(this.destroyRef),
+        ).subscribe({
+            next: res => {
+                this.target.set({ path: copyPath, version: res?.contentHash ?? null });
+                this.notice.set(res?.contentHash ? null : 'unversioned');
+                this.dirty.set(false);
+                this.toast.success('Saved as a copy', chosen.trim());
+            },
+            error: (err: unknown) => {
+                const status = err instanceof HttpErrorResponse ? err.status : 0;
+                this.toast.error(status === 409 ? 'A file with that name exists' : 'The copy could not be saved',
+                    chosen.trim());
+            },
+        });
+    }
+
+    /**
+     * The edits as a new `.ddoc`, composed by the server from the original at the version this editor read -- so no
+     * edit made since is merged in -- and never over a file. The editor then edits the copy.
+     */
+    private copyDdoc(copyPath: string, name: string): void {
+        const version = this.target().version;
+        if (version === null) return;
+        this.ddocs.copy(copyPath, this.target().path, version, this.ddocSectionsToSend(this.editorContent()), this.ddocFootnotesToSend())
             .pipe(takeUntilDestroyed(this.destroyRef))
             .subscribe({
-                next: () => {
+                next: res => {
+                    this.target.set({ path: res?.path ?? copyPath, version: res?.contentHash ?? null });
+                    this.notice.set(res?.contentHash ? null : 'unversioned');
+                    this.dirty.set(false);
+                    this.ddocPaperDirty.set(false);
+                    this.ddocEditedNotes.set({});
+                    this.toast.success('Saved as a copy', name);
+                },
+                error: (err: unknown) => {
+                    const status = err instanceof HttpErrorResponse ? err.status : 0;
+                    if (status === 409) {
+                        this.toast.error('A file with that name exists', name);
+                    } else if (status === 404 || status === 410) {
+                        this.toast.error(status === 404 ? 'The original was deleted, so no copy can be made from it'
+                            : 'The version you opened is no longer kept, so no copy can be made from it',
+                        'Download as .docx keeps your edits.');
+                    } else {
+                        this.toast.error('The copy could not be saved', name);
+                    }
+                },
+            });
+    }
+
+    private fileName(): string {
+        return this.target().path.split('/').pop() ?? this.node.name;
+    }
+
+    private saveDdoc(): void {
+        // Over a document that changed or went, or whose version was never read: never over it.
+        const version = this.target().version;
+        if (this.notice() !== null || version === null) {
+            this.notice.set(this.notice() ?? 'unversioned');
+            void this.saveAsCopy();
+
+            return;
+        }
+        this.saving.set(true);
+
+        this.ddocs.write(this.target().path, version, this.ddocSectionsToSend(this.editorContent()), this.ddocFootnotesToSend())
+            .pipe(takeUntilDestroyed(this.destroyRef))
+            .subscribe({
+                next: res => {
+                    const next = res?.contentHash ?? null;
+                    this.target.update(t => ({ ...t, version: next }));
+                    if (next === null) {
+                        this.notice.set('unversioned');
+                    }
                     this.dirty.set(false);
                     // The paper is on disk now, so the next save has nothing to
                     // say about it -- and leaving `page` out is what lets
@@ -1223,7 +1439,7 @@ export class DtmplEditorDialogComponent {
                     // the next save should mention none of them.
                     this.ddocEditedNotes.set({});
                     this.saving.set(false);
-                    this.toast.success('Saved', this.node.name);
+                    this.toast.success('Saved', this.fileName());
                 },
                 // The same reason the DTMPL save says this: a bare "Save
                 // failed" hides the one thing the author needs, and a document
@@ -1231,6 +1447,12 @@ export class DtmplEditorDialogComponent {
                 // message.
                 error: (err: unknown) => {
                     this.saving.set(false);
+                    const status = err instanceof HttpErrorResponse ? err.status : 0;
+                    if (status === 412 || status === 404) {
+                        this.notice.set(status === 412 ? 'changed' : 'deleted');
+
+                        return;
+                    }
                     this.toast.error(this.errors.humanize(err), 'Save failed');
                 },
             });
@@ -1260,6 +1482,6 @@ export class DtmplEditorDialogComponent {
         const manifest = this.store.selectSnapshot(AppConfigState.manifest);
         const tmpl = manifest?.vfs?.fileContentUrl;
         if (!tmpl) return null;
-        return tmpl.replace('{path}', encodeURIComponent(this.node.path));
+        return tmpl.replace('{path}', encodeURIComponent(this.target().path));
     }
 }

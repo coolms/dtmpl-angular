@@ -1,4 +1,4 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { DdocFootnoteEdits, DdocPayload, DdocSectionEdit } from '@coolms/ddoc';
 import type { Observable } from 'rxjs';
@@ -28,6 +28,9 @@ export type {
     DdocSectionEdit,
 } from '@coolms/ddoc';
 
+/** A `.ddoc` as read: the document, and the version it was read at (null when the file has none). */
+export type DdocRead = DdocPayload & { readonly contentHash?: string | null };
+
 /**
  * The `.ddoc` editing endpoints.
  *
@@ -50,18 +53,44 @@ export type {
 export class DdocDocumentService {
     private readonly http = inject(HttpClient);
 
-    read(path: string): Observable<DdocPayload> {
-        return this.http.get<DdocPayload>(this.url('content', path));
+    /** The document and the version it is at, from one read: the version every save of it names. */
+    read(path: string): Observable<DdocRead> {
+        return this.http.get<DdocRead>(this.url('content', path));
     }
 
+    /**
+     * The edits merged over the stored document, only if it is still at `version` (If-Match): a newer version is
+     * refused (412), a document gone is not made again (404).
+     */
     write(
         path: string,
+        version: string,
         sections: readonly DdocSectionEdit[],
         footnotes?: DdocFootnoteEdits,
-    ): Observable<{ contentHash: string }> {
-        return this.http.put<{ contentHash: string }>(
+    ): Observable<{ contentHash?: string | null }> {
+        return this.http.put<{ contentHash?: string | null }>(
             this.url('content', path),
             this.payload(sections, footnotes),
+            { headers: this.ifMatch(version) },
+        );
+    }
+
+    /**
+     * The edits saved as a NEW document at `path`, composed by the server from `from` AS IT WAS AT `version` -- so no
+     * edit made since is merged in. Never over a file: a name taken answers 409; the original gone, 404; that version
+     * no longer kept, 410.
+     */
+    copy(
+        path: string,
+        from: string,
+        version: string,
+        sections: readonly DdocSectionEdit[],
+        footnotes?: DdocFootnoteEdits,
+    ): Observable<{ path?: string; contentHash?: string | null }> {
+        return this.http.post<{ path?: string; contentHash?: string | null }>(
+            `${this.url('copy', path)}&from=${encodeURIComponent(from)}`,
+            this.payload(sections, footnotes),
+            { headers: this.ifMatch(version) },
         );
     }
 
@@ -110,6 +139,10 @@ export class DdocDocumentService {
         return undefined === footnotes || 0 === Object.keys(footnotes).length
             ? { sections }
             : { sections, footnotes };
+    }
+
+    private ifMatch(version: string): HttpHeaders {
+        return new HttpHeaders({ 'If-Match': `"${version}"` });
     }
 
     private url(action: string, path: string): string {

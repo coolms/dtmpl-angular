@@ -9,6 +9,29 @@ yet; entries are written in the same commit as the work they describe.
 
 ## Unreleased
 
+### Fixed
+
+- A document, `.dtmpl` or `.ddoc`, is saved only over the version it was
+  read at. The editor reads the content and its version (`contentHash`) in
+  one read, and every save sends that version as `If-Match`. A file saved
+  by someone else since is refused (412), and one deleted since is not made
+  again (404). The editor says so and offers Reload or Save as a copy, and
+  never retries or merges on its own. A read that names no version is never
+  saved over. Before, a save overwrote whatever was there, so of two people
+  editing one file the later save silently replaced the earlier one.
+- Save as a copy never replaces a file of that name (409), and the editor
+  then edits the copy. A `.dtmpl` copy is the editor's own text, written
+  with overwrite off. A `.ddoc` copy is composed by the server from the
+  original at the version the editor read plus its edits, so no edit made
+  since is merged in. There is no copy of a `.ddoc` that is gone or that
+  named no version; the notice says that Download as .docx keeps the edits.
+- `DdocDocumentService.write()` takes the version to save over, and
+  `read()` answers it (`DdocRead`); `copy()` is new.
+- A document whose read failed, `.dtmpl` or `.ddoc`, opens no editor: the
+  notice says it could not be read and offers Reload, and Save is off.
+  Before, both left an empty, editable editor, and its Save wrote over the
+  file (for a `.ddoc`, over its first section).
+
 ### Changed
 
 - The package declares its own toolchain (the Angular compiler, ng-packagr,
