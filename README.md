@@ -55,6 +55,10 @@ editor serialises across page breaks, the footnote references and the paper
 rules (`DdocDocumentService`), the footnotes panel, and the two services that
 ask the server for page sizes and for a paper-accurate preview.
 
+## Tests
+
+This package has no test runner of its own, so CI finds no tests in it: only typecheck, lint and build guard it here, and a check of "the same number of tests before and after" proves nothing for it. Its 3 spec files run in the admin suite of [coolms/theme-admin](https://github.com/coolms/theme-admin), which compiles this package from source. A change here is tested there, not by this repository's CI.
+
 ## Status
 
 A pre-release line, `2.0.0-alpha.N`, published nowhere yet. It carries no
