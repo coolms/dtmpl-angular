@@ -33,6 +33,7 @@ yet; entries are written in the same commit as the work they describe.
   file (for a `.ddoc`, over its first section).
 
 ### Changed
+- Colour fallbacks follow the design tokens: muted text and the danger colour take the values they hold since v0.6.0.
 
 - **`engines.node` names exactly the Node lines CI runs.** It moves from
   `^22.22.3 || ^24.15.0 || >=26` to `^22.22.3 || ^24.15.0 || ^26.0.0`: Node 27
