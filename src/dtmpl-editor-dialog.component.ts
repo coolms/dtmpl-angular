@@ -438,7 +438,7 @@ import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms
             padding: 16px; text-align: center; font-size: .875rem;
         }
         .dtmpl-editor-dialog__preview-idle { color: var(--cms-text-muted); }
-        .dtmpl-editor-dialog__preview-error { color: var(--cms-danger, #dc2626); }
+        .dtmpl-editor-dialog__preview-error { color: var(--cms-danger, #b91c1c); }
         /* The viewer is the whole pane; without this it collapses to its
          * intrinsic height inside the flex column. */
         .dtmpl-editor-dialog__pane--preview cms-pdf-viewer {
