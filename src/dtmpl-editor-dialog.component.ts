@@ -40,7 +40,12 @@ import { DocumentPreviewService } from './document-preview.service';
 import { PdfViewerComponent } from '@coolms/pdf-angular';
 import { DdocFootnotesPanelComponent } from './ddoc-footnotes-panel.component';
 import { DTMPL_CONTENT_ADAPTER } from './dtmpl-content-adapter';
-import { AppConfigState, CmsLoaderComponent, ErrorHandlerService } from '@coolms/core-angular';
+import {
+    AppConfigState, CmsLoaderComponent, declaredTypeOf, ErrorHandlerService, refusalWords,
+} from '@coolms/core-angular';
+
+/** The declared refusals of a .ddoc copy that mean no copy can be made from the original at all. */
+const NO_COPY_FROM_ORIGINAL: readonly string[] = ['/errors/document/original-gone', '/errors/document/version-not-kept'];
 
 /**
  * Generic body-editor for `.dtmpl` VFS files (variants and standalone).
@@ -1366,9 +1371,7 @@ export class DtmplEditorDialogComponent {
                 this.toast.success('Saved as a copy', chosen.trim());
             },
             error: (err: unknown) => {
-                const status = err instanceof HttpErrorResponse ? err.status : 0;
-                this.toast.error(status === 409 ? 'A file with that name exists' : 'The copy could not be saved',
-                    chosen.trim());
+                this.toast.error(refusalWords(err), chosen.trim());
             },
         });
     }
@@ -1392,16 +1395,9 @@ export class DtmplEditorDialogComponent {
                     this.toast.success('Saved as a copy', name);
                 },
                 error: (err: unknown) => {
-                    const status = err instanceof HttpErrorResponse ? err.status : 0;
-                    if (status === 409) {
-                        this.toast.error('A file with that name exists', name);
-                    } else if (status === 404 || status === 410) {
-                        this.toast.error(status === 404 ? 'The original was deleted, so no copy can be made from it'
-                            : 'The version you opened is no longer kept, so no copy can be made from it',
-                        'Download as .docx keeps your edits.');
-                    } else {
-                        this.toast.error('The copy could not be saved', name);
-                    }
+                    // No copy can be made from the original: the edits survive only as a download.
+                    const fromOriginal = NO_COPY_FROM_ORIGINAL.includes(declaredTypeOf(err) ?? '');
+                    this.toast.error(refusalWords(err), fromOriginal ? 'Download as .docx keeps your edits.' : name);
                 },
             });
     }

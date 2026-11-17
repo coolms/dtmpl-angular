@@ -13,7 +13,7 @@
     "@angular/common": "^22.0.0",
     "@angular/core": "^22.0.0",
     "@angular/forms": "^22.0.0",
-    "@coolms/core-angular": "^2.0.0-alpha.1",
+    "@coolms/core-angular": "^2.0.0-alpha.7",
     "@coolms/ddoc": "0.1.0-alpha.1",
     "@coolms/editor-angular": "^2.0.0-alpha.1",
     "@coolms/pdf-angular": "^2.0.0-alpha.1",
