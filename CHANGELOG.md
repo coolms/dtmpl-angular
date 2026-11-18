@@ -9,6 +9,13 @@ yet; entries are written in the same commit as the work they describe.
 
 ## Unreleased
 
+- **A refused copy says the server's words.** Save as a copy, for a template and for a `.ddoc`, reads `refusalWords`
+  from `@coolms/core-angular`: a declared problem says its `detail`, anything else "Something went wrong. Try again."
+  The editor's own "A file with that name exists", "The copy could not be saved", "The original was deleted, so no
+  copy can be made from it" and "The version you opened is no longer kept, so no copy can be made from it" are gone.
+  For the two refusals that mean no copy can be made from the original at all, `/errors/document/original-gone` and
+  `/errors/document/version-not-kept`, the toast keeps its second line, "Download as .docx keeps your edits." The peer
+  dependency on `@coolms/core-angular` is now `^2.0.0-alpha.7`, the first release with the rule.
 ### Fixed
 
 - A document, `.dtmpl` or `.ddoc`, is saved only over the version it was

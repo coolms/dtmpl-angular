@@ -261,6 +261,25 @@ describe('DtmplEditorDialogComponent -- saves over the version it read', () => {
         next.flush({ contentHash: 'c2' });
     });
 
+    it('a refused copy says the server\'s declared words, naming the copy', async () => {
+        const editor = open();
+        serve();
+        editor.detectChanges();
+        stored.hash = 'v9';
+        const error = spyOn(TestBed.inject(ToastService), 'error');
+
+        edit(editor, '<p>mine</p>');
+        click(editor, 'Save');
+        serve();
+        editor.detectChanges();
+        click(editor, 'Save as a copy');
+        await Promise.resolve();
+        await Promise.resolve();
+
+        httpMock.expectOne(BINARY).flush({ type: '/errors/files/already-exists', title: 'Already exists', status: 409, detail: 'A file named en (copy).dtmpl is already here.' }, { status: 409, statusText: 'Conflict' });
+        expect(error).toHaveBeenCalledOnceWith('A file named en (copy).dtmpl is already here.', 'en (copy).dtmpl');
+    });
+
     it('a read that names no version: nothing is saved over the file, the edits go to a copy', async () => {
         const editor = open();
         httpMock.expectOne(URL).flush({ content: stored.content });
@@ -485,6 +504,33 @@ describe('DtmplEditorDialogComponent -- a .ddoc saves over the version it read',
         const next = httpMock.expectOne('/api/v1/document/ddoc/content?path=%2Fdocs%2Freport%20(copy).ddoc');
         expect(next.request.headers.get('If-Match')).toBe('"c1"');
         next.flush({ contentHash: 'c2' });
+    });
+
+    it('a copy refused because the version opened is no longer kept says the server\'s words and the way out', async () => {
+        const doc = open();
+        serve();
+        stored = { html: '<p>someone else</p>', hash: 'd5', deleted: false };
+        revisions['d5'] = stored.html;
+        const error = spyOn(TestBed.inject(ToastService), 'error');
+
+        edit(doc, '<p>mine</p>');
+        doc.componentInstance.save();
+        serve();
+        doc.detectChanges();
+        doc.componentInstance.saveAsCopy();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        httpMock.expectOne(COPY).flush({
+            type: '/errors/document/version-not-kept',
+            title: 'Version not kept',
+            status: 410,
+            detail: 'The version you opened is no longer kept, so no copy can be made from it. Open the document again to copy it.',
+        }, { status: 410, statusText: 'Gone' });
+        expect(error).toHaveBeenCalledOnceWith(
+            'The version you opened is no longer kept, so no copy can be made from it. Open the document again to copy it.',
+            'Download as .docx keeps your edits.',
+        );
     });
 
     it('a document deleted since it was opened: said, no copy offered, and nothing is made again', () => {
