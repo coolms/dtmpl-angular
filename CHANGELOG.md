@@ -9,6 +9,10 @@ yet; entries are written in the same commit as the work they describe.
 
 ## Unreleased
 
+- **katex 0.18.11, through the editor.** The peer `@coolms/editor-angular` is now `^2.0.0-alpha.3`, the first release
+  with katex `^0.18.11`, so what a consumer installs no longer carries GHSA-238p-pmpm-9mq7 (low; prototype pollution
+  that bypasses `trust`); its line is off the advisories list. Formulas render as before (katex 0.18 renames five
+  classes, and the editor loads the stylesheet of the same version).
 - **A refused copy says the server's words.** Save as a copy, for a template and for a `.ddoc`, reads `refusalWords`
   from `@coolms/core-angular`: a declared problem says its `detail`, anything else "Something went wrong. Try again."
   The editor's own "A file with that name exists", "The copy could not be saved", "The original was deleted, so no
